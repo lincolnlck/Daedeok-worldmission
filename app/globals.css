@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f8fafc;
+  --foreground: #1e293b;
 }
 
 @theme inline {
@@ -12,15 +12,80 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+/* 스크롤바 스타일링 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* 모바일 최적화 */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 스크롤바 숨기기 유틸리티 */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* 터치 액션 최적화 */
+.touch-manipulation {
+  touch-action: manipulation;
+}
+
+/* Leaflet 지도 컨트롤 숨기기 - 좌측 하단의 모든 컨트롤 숨김 (N 버튼 포함) */
+.leaflet-bottom-left,
+.leaflet-left .leaflet-control,
+.leaflet-control-container .leaflet-bottom-left {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* 추가적인 N 버튼 숨기기 */
+.leaflet-control button[title*="North"],
+.leaflet-control button[title*="N"],
+.leaflet-control button[aria-label*="North"],
+.leaflet-control button[aria-label*="N"],
+.leaflet-control-compass,
+.leaflet-control-north,
+button[title*="North"],
+button[title*="N"],
+div[title*="North"],
+div[title*="N"] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* 좌측 하단 영역의 모든 요소 숨기기 */
+.leaflet-container .leaflet-bottom-left,
+.leaflet-container .leaflet-left {
+  display: none !important;
 }
