@@ -45,18 +45,21 @@ export default function Home() {
   const [sortBy, setSortBy] = useState<"name" | "country" | "updated">("name");
 
   const SIDEBAR_WIDTH_KEY = "mission-prayer-sidebar-width";
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    if (typeof window === "undefined") return 420;
+  const [sidebarWidth, setSidebarWidth] = useState(420);
+  const isResizingRef = useRef(false);
+  const lastWidthRef = useRef(420);
+
+  useEffect(() => {
     try {
       const w = localStorage.getItem(SIDEBAR_WIDTH_KEY);
       const n = w ? parseInt(w, 10) : NaN;
-      return Number.isFinite(n) && n >= 280 && n <= 700 ? n : 420;
+      const width = Number.isFinite(n) && n >= 280 && n <= 700 ? n : 420;
+      setSidebarWidth(width);
+      lastWidthRef.current = width;
     } catch {
-      return 420;
+      // ignore
     }
-  });
-  const isResizingRef = useRef(false);
-  const lastWidthRef = useRef(sidebarWidth);
+  }, []);
 
   const FAVORITES_KEY = "mission-prayer-favorites";
   const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
@@ -412,11 +415,11 @@ export default function Home() {
                       router.push(`/viewer/${m.folderId}`);
                     }
                   }}
-                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition-all touch-manipulation active:scale-[0.98] flex items-center gap-2 ${
-                    selected?.folderId === m.folderId
-                      ? "bg-blue-50 border-blue-300 shadow-sm"
-                      : "bg-white border-gray-200 active:bg-gray-50 active:border-gray-300"
-                  }`}
+                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition-[background-color,border-color,transform,box-shadow] duration-150 touch-manipulation cursor-pointer flex items-center gap-2
+                    ${selected?.folderId === m.folderId
+                      ? "bg-blue-50 border-blue-300 shadow-sm hover:bg-blue-100 hover:border-blue-400 active:scale-[0.98] active:bg-blue-200/90 active:shadow-inner"
+                      : "bg-white border-gray-200 hover:bg-blue-50 hover:border-blue-200 active:scale-[0.98] active:bg-blue-100 active:border-blue-300 active:shadow-inner"
+                    }`}
                 >
                   <button
                     type="button"

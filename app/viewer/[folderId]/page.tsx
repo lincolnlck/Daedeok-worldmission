@@ -325,7 +325,7 @@ export default function ImageViewerPage() {
           </button>
         )}
 
-        {/* 줌 컨트롤 버튼 */}
+        {/* 줌 컨트롤 버튼: +/− 위치 고정, 1:1은 항상 아래 칸에 표시 */}
         <div className="absolute bottom-3 right-3 md:bottom-4 md:right-4 flex flex-col gap-1.5 z-20">
           <button
             onClick={zoomIn}
@@ -344,15 +344,18 @@ export default function ImageViewerPage() {
           >
             −
           </button>
-          {zoom > 1 && (
-            <button
-              onClick={zoomReset}
-              className="w-[60px] h-[60px] md:w-[66px] md:h-[66px] bg-black/70 text-white rounded-xl flex items-center justify-center text-sm font-bold hover:bg-black/90 active:bg-white/20 transition-colors touch-manipulation"
-              aria-label="원래 크기"
-            >
-              1:1
-            </button>
-          )}
+          {/* 1:1 버튼 자리 항상 확보 → +/− 위치 고정, zoom>1일 때만 버튼 표시 */}
+          <div className="w-[60px] h-[60px] md:w-[66px] md:h-[66px] flex items-center justify-center">
+            {zoom > 1 && (
+              <button
+                onClick={zoomReset}
+                className="w-full h-full bg-black/70 text-white rounded-xl flex items-center justify-center text-sm font-bold hover:bg-black/90 active:bg-white/20 transition-colors touch-manipulation"
+                aria-label="원래 크기"
+              >
+                1:1
+              </button>
+            )}
+          </div>
         </div>
 
         {/* 줌 레벨 표시 */}
