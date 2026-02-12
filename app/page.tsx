@@ -1,9 +1,10 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { countryCenters } from "./data/countryCenters";
+import { resolveCountryKey, customRegionCenters } from "./data/countryAliases";
 import Header from "./components/Header";
 import ImageModal from "./components/ImageModal";
 import StatsDashboard from "./components/StatsDashboard";
@@ -14,6 +15,7 @@ type ApiItem = {
   name: string;
   country: string;
   ministry: string;
+  updatedAtMs?: number;
 };
 
 type MissionaryItem = ApiItem & { lat: number; lng: number };
@@ -40,12 +42,135 @@ export default function Home() {
   const [q, setQ] = useState("");
   const [selectedCountry, setSelectedCountry] = useState<string>("");
   const [modalImage, setModalImage] = useState<ImageItem | null>(null);
+  const [sortBy, setSortBy] = useState<"name" | "country" | "updated">("name");
+
+  const SIDEBAR_WIDTH_KEY = "mission-prayer-sidebar-width";
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    if (typeof window === "undefined") return 420;
+    try {
+      const w = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+      const n = w ? parseInt(w, 10) : NaN;
+      return Number.isFinite(n) && n >= 280 && n <= 700 ? n : 420;
+    } catch {
+      return 420;
+    }
+  });
+  const isResizingRef = useRef(false);
+  const lastWidthRef = useRef(sidebarWidth);
+
+  const FAVORITES_KEY = "mission-prayer-favorites";
+  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(FAVORITES_KEY);
+      const arr = raw ? (JSON.parse(raw) as string[]) : [];
+      if (Array.isArray(arr) && arr.length > 0) {
+        setFavoriteIds(new Set(arr));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const startResize = useCallback(() => {
+    isResizingRef.current = true;
+    const minW = 280;
+    const maxW = 700;
+    const onMove = (e: MouseEvent) => {
+      const w = Math.min(maxW, Math.max(minW, e.clientX));
+      lastWidthRef.current = w;
+      setSidebarWidth(w);
+    };
+    const onUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try {
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(lastWidthRef.current));
+      } catch {
+        // ignore
+      }
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
+  const toggleFavorite = useCallback((folderId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      try {
+        localStorage.setItem(FAVORITES_KEY, JSON.stringify([...next]));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+
+  const CACHE_KEY = "mission-prayer-missionaries";
+
+  const refreshMissionaries = useCallback((skipCache = false) => {
+    try {
+      sessionStorage.removeItem(CACHE_KEY);
+    } catch {
+      // ignore
+    }
     setLoadingItems(true);
+    const url = skipCache
+      ? `/api/missionaries?refresh=1&_=${Date.now()}`
+      : "/api/missionaries";
+    fetch(url, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        const list = d.items ?? [];
+        setItems(list);
+        try {
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify({ items: list }));
+        } catch {
+          // ignore
+        }
+      })
+      .catch((err) => {
+        console.error("Failed to load missionaries:", err);
+        setItems([]);
+      })
+      .finally(() => setLoadingItems(false));
+  }, []);
+
+  useEffect(() => {
+    const raw = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(CACHE_KEY) : null;
+    if (raw) {
+      try {
+        const { items: cachedItems } = JSON.parse(raw) as { items: ApiItem[] };
+        if (Array.isArray(cachedItems) && cachedItems.length >= 0) {
+          setItems(cachedItems);
+          setLoadingItems(false);
+        }
+      } catch {
+        // ignore invalid cache
+      }
+    }
+
     fetch("/api/missionaries")
       .then((r) => r.json())
-      .then((d) => setItems(d.items ?? []))
+      .then((d) => {
+        const list = d.items ?? [];
+        setItems(list);
+        try {
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify({ items: list }));
+        } catch {
+          // ignore quota etc
+        }
+      })
       .catch((err) => {
         console.error("Failed to load missionaries:", err);
         setItems([]);
@@ -55,7 +180,11 @@ export default function Home() {
 
   const mapped: MissionaryItem[] = useMemo(() => {
     return items.map((m) => {
-      const center = countryCenters[m.country] ?? { lat: 20, lng: 0 };
+      const key = resolveCountryKey(m.country, countryCenters);
+      const center =
+        countryCenters[key] ??
+        customRegionCenters[key] ??
+        { lat: 20, lng: 0 };
       const j = jitter(center.lat, center.lng, m.folderName);
       return { ...m, lat: j.lat, lng: j.lng };
     });
@@ -80,6 +209,34 @@ export default function Home() {
     return result;
   }, [mapped, q, selectedCountry]);
 
+  const sortMissionaries = useCallback((list: MissionaryItem[]) => {
+    return [...list].sort((a, b) => {
+      if (sortBy === "name") {
+        return (a.name || "").localeCompare(b.name || "", "ko");
+      }
+      if (sortBy === "country") {
+        const c = (a.country || "").localeCompare(b.country || "", "ko");
+        return c !== 0 ? c : (a.name || "").localeCompare(b.name || "", "ko");
+      }
+      if (sortBy === "updated") {
+        const ta = a.updatedAtMs ?? 0;
+        const tb = b.updatedAtMs ?? 0;
+        return tb - ta;
+      }
+      return 0;
+    });
+  }, [sortBy]);
+
+  const filteredWithFavoritesFirst = useMemo(() => {
+    const fav: MissionaryItem[] = [];
+    const rest: MissionaryItem[] = [];
+    for (const m of filtered) {
+      if (favoriteIds.has(m.folderId)) fav.push(m);
+      else rest.push(m);
+    }
+    return [...sortMissionaries(fav), ...sortMissionaries(rest)];
+  }, [filtered, favoriteIds, sortMissionaries]);
+
   const stats = useMemo(() => {
     const uniqueCountries = new Set(mapped.map((m) => m.country).filter(Boolean));
     return {
@@ -88,6 +245,23 @@ export default function Home() {
       visibleCount: filtered.length,
     };
   }, [mapped, filtered]);
+
+  const latestUpdateNotice = useMemo(() => {
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const cutoff = now - THIRTY_DAYS_MS;
+    let latest: MissionaryItem | null = null;
+    for (const m of mapped) {
+      const t = m.updatedAtMs ?? 0;
+      if (t < cutoff) continue;
+      if (!latest || t > (latest.updatedAtMs ?? 0)) latest = m;
+    }
+    if (!latest) return null;
+    const d = new Date(latest.updatedAtMs!);
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    return { missionary: latest, dateLabel: `${month}월 ${day}일` };
+  }, [mapped]);
 
   useEffect(() => {
     if (!selected) {
@@ -135,6 +309,8 @@ export default function Home() {
       <StatsDashboard
         totalMissionaries={stats.totalMissionaries}
         totalCountries={stats.totalCountries}
+        onRefresh={() => refreshMissionaries(true)}
+        isRefreshing={loadingItems}
       />
 
       {/* 검색 및 필터 */}
@@ -159,8 +335,62 @@ export default function Home() {
         </select>
       </div>
 
+      {/* 최근 업데이트 알림 (지난 30일 이내 있을 때만) */}
+      {latestUpdateNotice && (
+        <button
+          type="button"
+          onClick={() => router.push(`/viewer/${latestUpdateNotice.missionary.folderId}`)}
+          className="w-full mb-3 text-left rounded-lg px-3 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-sm hover:bg-amber-100 active:bg-amber-100 transition-colors touch-manipulation"
+        >
+          <span className="font-medium">{latestUpdateNotice.missionary.name} 선교사님</span>의 기도편지가 {latestUpdateNotice.dateLabel} 업데이트되었습니다.
+        </button>
+      )}
+
+      {/* 정렬 */}
+      <div className="mb-3">
+        <span className="text-xs md:text-sm font-medium text-gray-600 mr-2">정렬:</span>
+        <div className="flex gap-1.5 mt-1">
+          <button
+            type="button"
+            onClick={() => setSortBy("name")}
+            className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors touch-manipulation ${
+              sortBy === "name"
+                ? "bg-blue-600 text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            이름
+          </button>
+          <button
+            type="button"
+            onClick={() => setSortBy("country")}
+            className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors touch-manipulation ${
+              sortBy === "country"
+                ? "bg-blue-600 text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            나라
+          </button>
+          <button
+            type="button"
+            onClick={() => setSortBy("updated")}
+            className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors touch-manipulation ${
+              sortBy === "updated"
+                ? "bg-blue-600 text-white"
+                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+            }`}
+          >
+            업데이트
+          </button>
+        </div>
+      </div>
+
       {/* 선교사 목록 */}
       <div className="mb-4">
+        {filteredWithFavoritesFirst.some((m) => favoriteIds.has(m.folderId)) && (
+          <h3 className="text-xs md:text-sm font-semibold text-amber-600 mb-1.5">⭐ 즐겨찾기</h3>
+        )}
         <h3 className="text-xs md:text-sm font-semibold text-gray-700 mb-2">선교사 목록</h3>
         <div className="space-y-1.5 md:space-y-2">
           {filtered.length === 0 ? (
@@ -168,20 +398,50 @@ export default function Home() {
               <p className="text-sm">검색 결과가 없습니다</p>
             </div>
           ) : (
-            filtered.slice(0, 50).map((m) => (
-              <button
-                key={m.folderId}
-                className={`w-full text-left rounded-lg px-3 py-2.5 border transition-all touch-manipulation active:scale-[0.98] ${
-                  selected?.folderId === m.folderId
-                    ? "bg-blue-50 border-blue-300 shadow-sm"
-                    : "bg-white border-gray-200 active:bg-gray-50 active:border-gray-300"
-                }`}
-                onClick={() => router.push(`/viewer/${m.folderId}`)}
-              >
-                <div className="font-semibold text-gray-900 text-sm md:text-base">{m.name} 선교사</div>
-                <div className="text-xs text-gray-600 mt-0.5">{m.country || "국가 미지정"}</div>
-              </button>
-            ))
+            filteredWithFavoritesFirst.slice(0, 50).map((m) => {
+              const isFav = favoriteIds.has(m.folderId);
+              return (
+                <div
+                  key={m.folderId}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => router.push(`/viewer/${m.folderId}`)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      router.push(`/viewer/${m.folderId}`);
+                    }
+                  }}
+                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition-all touch-manipulation active:scale-[0.98] flex items-center gap-2 ${
+                    selected?.folderId === m.folderId
+                      ? "bg-blue-50 border-blue-300 shadow-sm"
+                      : "bg-white border-gray-200 active:bg-gray-50 active:border-gray-300"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={(e) => toggleFavorite(m.folderId, e)}
+                    className="flex-shrink-0 w-7 h-7 rounded flex items-center justify-center text-gray-400 hover:text-amber-500 hover:bg-amber-50 transition-colors touch-manipulation"
+                    aria-label={isFav ? "즐겨찾기 해제" : "즐겨찾기"}
+                    title={isFav ? "즐겨찾기 해제" : "즐겨찾기"}
+                  >
+                    {isFav ? (
+                      <svg className="w-5 h-5 text-amber-500" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
+                      </svg>
+                    )}
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-gray-900 text-sm md:text-base">{m.name} 선교사</div>
+                    <div className="text-xs text-gray-600 mt-0.5">{m.country || "국가 미지정"}</div>
+                  </div>
+                </div>
+              );
+            })
           )}
           {filtered.length > 50 && (
             <div className="text-[10px] md:text-xs text-gray-500 text-center py-2">
@@ -263,13 +523,24 @@ export default function Home() {
       <div className="hidden lg:flex lg:flex-col lg:h-screen">
         <Header />
         <div className="flex flex-1 overflow-hidden">
-          {/* 사이드바 - 왼쪽 (고정 너비, 내부 스크롤) */}
-          <aside className="w-[420px] flex-shrink-0 border-r bg-white overflow-y-auto p-4">
+          {/* 사이드바 - 왼쪽 (리사이즈 가능) */}
+          <aside
+            className="flex-shrink-0 bg-white overflow-y-auto p-4"
+            style={{ width: sidebarWidth }}
+          >
             {sidebarContent}
           </aside>
 
-          {/* 지도 - 오른쪽 (나머지 공간 전부, 높이 고정) */}
-          <div className="flex-1 relative">
+          {/* 리사이저 바 */}
+          <div
+            role="separator"
+            aria-label="리스트·지도 너비 조절"
+            onMouseDown={startResize}
+            className="flex-shrink-0 w-2 cursor-col-resize bg-gray-200 hover:bg-blue-300 active:bg-blue-400 transition-colors"
+          />
+
+          {/* 지도 - 오른쪽 (나머지 공간 전부) */}
+          <div className="flex-1 relative min-w-0">
             {loadingItems ? (
               <div className="absolute inset-0 flex items-center justify-center bg-gray-50">
                 <div className="text-center">

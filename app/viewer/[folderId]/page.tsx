@@ -27,6 +27,41 @@ function extractDateFromName(name: string): Date | null {
   return null;
 }
 
+// 파일명 끝에서 숫자 추출 (예: page1.jpg → 1, 기도편지_03.png → 3)
+function extractTrailingNumber(name: string): number {
+  // 확장자 제거
+  const withoutExt = name.replace(/\.[^.]+$/, "");
+  // 끝에 있는 숫자 추출
+  const match = withoutExt.match(/(\d+)$/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+// 정렬: 1차 최신 날짜순, 2차 파일명 끝 숫자 오름차순
+function sortImages(images: ImageItem[]): ImageItem[] {
+  return [...images].sort((a, b) => {
+    const dateA = extractDateFromName(a.name);
+    const dateB = extractDateFromName(b.name);
+
+    // 날짜가 있는 파일이 없는 파일보다 먼저
+    if (dateA && !dateB) return -1;
+    if (!dateA && dateB) return 1;
+
+    // 둘 다 날짜가 있으면 최신순 (내림차순)
+    if (dateA && dateB) {
+      const diff = dateB.getTime() - dateA.getTime();
+      if (diff !== 0) return diff;
+    }
+
+    // 같은 날짜(또는 둘 다 날짜 없음)면 파일명 끝 숫자 오름차순
+    const numA = extractTrailingNumber(a.name);
+    const numB = extractTrailingNumber(b.name);
+    if (numA !== numB) return numA - numB;
+
+    // 숫자도 같으면 파일명 알파벳순
+    return a.name.localeCompare(b.name);
+  });
+}
+
 export default function ImageViewerPage() {
   const params = useParams();
   const router = useRouter();
@@ -39,6 +74,65 @@ export default function ImageViewerPage() {
   const [touchStart, setTouchStart] = useState<number | null>(null);
   const [touchEnd, setTouchEnd] = useState<number | null>(null);
   const imageContainerRef = useRef<HTMLDivElement>(null);
+
+  // 줌 관련 상태
+  const [zoom, setZoom] = useState(1);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  const zoomIn = () => setZoom((z) => Math.min(z + 0.5, 5));
+  const zoomOut = () => {
+    setZoom((z) => {
+      const next = Math.max(z - 0.5, 1);
+      if (next === 1) setPosition({ x: 0, y: 0 });
+      return next;
+    });
+  };
+  const zoomReset = () => {
+    setZoom(1);
+    setPosition({ x: 0, y: 0 });
+  };
+
+  // 이미지 바뀌면 줌 리셋
+  useEffect(() => {
+    zoomReset();
+  }, [currentIndex]);
+
+  // 마우스 휠로 확대/축소
+  useEffect(() => {
+    const container = imageContainerRef.current;
+    if (!container) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.deltaY < 0) {
+        setZoom((z) => Math.min(z + 0.25, 5));
+      } else {
+        setZoom((z) => {
+          const next = Math.max(z - 0.25, 1);
+          if (next === 1) setPosition({ x: 0, y: 0 });
+          return next;
+        });
+      }
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: false });
+    return () => container.removeEventListener("wheel", onWheel);
+  }, []);
+
+  // 마우스 드래그 (확대 상태에서 이미지 이동)
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (zoom <= 1) return;
+    e.preventDefault();
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+  };
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging || zoom <= 1) return;
+    setPosition({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+  };
+  const onMouseUp = () => setIsDragging(false);
 
   // 최소 스와이프 거리 (픽셀)
   const minSwipeDistance = 50;
@@ -63,19 +157,7 @@ export default function ImageViewerPage() {
       .then((r) => r.json())
       .then((d) => {
         const imageList = d.images ?? [];
-        // 최신순으로 정렬
-        const sortedImages = [...imageList].sort((a, b) => {
-          const dateA = extractDateFromName(a.name);
-          const dateB = extractDateFromName(b.name);
-          
-          if (dateA && dateB) {
-            return dateB.getTime() - dateA.getTime();
-          }
-          
-          return 0;
-        }).reverse();
-        
-        setImages(sortedImages);
+        setImages(sortImages(imageList));
         setCurrentIndex(0);
       })
       .catch((err) => {
@@ -127,6 +209,9 @@ export default function ImageViewerPage() {
       if (e.key === "ArrowRight") nextImage();
       if (e.key === "ArrowLeft") prevImage();
       if (e.key === "Escape") router.push('/');
+      if (e.key === "+" || e.key === "=") zoomIn();
+      if (e.key === "-") zoomOut();
+      if (e.key === "0") zoomReset();
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -194,10 +279,15 @@ export default function ImageViewerPage() {
       {/* 이미지 영역 - 남은 공간 전체 사용 */}
       <div 
         ref={imageContainerRef}
-        className="flex-1 min-h-0 flex items-center justify-center relative px-2 md:px-4 py-1"
-        onTouchStart={onTouchStart}
-        onTouchMove={onTouchMove}
-        onTouchEnd={onTouchEnd}
+        className="flex-1 min-h-0 flex items-center justify-center relative px-2 md:px-4 py-1 overflow-hidden"
+        onTouchStart={zoom <= 1 ? onTouchStart : undefined}
+        onTouchMove={zoom <= 1 ? onTouchMove : undefined}
+        onTouchEnd={zoom <= 1 ? onTouchEnd : undefined}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
+        style={{ cursor: zoom > 1 ? (isDragging ? "grabbing" : "grab") : "default" }}
       >
         {/* 이전 버튼 */}
         {currentIndex > 0 && (
@@ -210,11 +300,14 @@ export default function ImageViewerPage() {
           </button>
         )}
 
-        {/* 이미지 - 영역 안에 꽉 맞춤 */}
+        {/* 이미지 - 줌 적용 */}
         <img
           src={currentImage.url}
           alt={currentImage.name}
-          className="max-w-full max-h-full object-contain select-none"
+          className="max-w-full max-h-full object-contain select-none transition-transform duration-150"
+          style={{
+            transform: `scale(${zoom}) translate(${position.x / zoom}px, ${position.y / zoom}px)`,
+          }}
           draggable={false}
           onError={() => {
             console.error("Image load error:", currentImage.url);
@@ -230,6 +323,43 @@ export default function ImageViewerPage() {
           >
             ›
           </button>
+        )}
+
+        {/* 줌 컨트롤 버튼 */}
+        <div className="absolute bottom-3 right-3 md:bottom-4 md:right-4 flex flex-col gap-1.5 z-20">
+          <button
+            onClick={zoomIn}
+            className="w-[60px] h-[60px] md:w-[66px] md:h-[66px] bg-black/70 text-white rounded-xl flex items-center justify-center text-3xl font-bold hover:bg-black/90 active:bg-white/20 transition-colors touch-manipulation"
+            aria-label="확대"
+          >
+            +
+          </button>
+          <button
+            onClick={zoomOut}
+            disabled={zoom <= 1}
+            className={`w-[60px] h-[60px] md:w-[66px] md:h-[66px] bg-black/70 rounded-xl flex items-center justify-center text-3xl font-bold transition-colors touch-manipulation ${
+              zoom <= 1 ? "text-gray-600 cursor-not-allowed" : "text-white hover:bg-black/90 active:bg-white/20"
+            }`}
+            aria-label="축소"
+          >
+            −
+          </button>
+          {zoom > 1 && (
+            <button
+              onClick={zoomReset}
+              className="w-[60px] h-[60px] md:w-[66px] md:h-[66px] bg-black/70 text-white rounded-xl flex items-center justify-center text-sm font-bold hover:bg-black/90 active:bg-white/20 transition-colors touch-manipulation"
+              aria-label="원래 크기"
+            >
+              1:1
+            </button>
+          )}
+        </div>
+
+        {/* 줌 레벨 표시 */}
+        {zoom > 1 && (
+          <div className="absolute top-3 right-3 bg-black/70 text-white text-xs px-2 py-1 rounded z-20">
+            {Math.round(zoom * 100)}%
+          </div>
         )}
       </div>
 
