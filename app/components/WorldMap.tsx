@@ -212,28 +212,40 @@ export default function WorldMap({
   onSelect: (m: MissionaryItem) => void;
 }) {
   const router = useRouter();
-  
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   // 초기 중심점과 줌 레벨 계산
   const initialCenter = useMemo(() => {
     if (items.length === 0) return [20, 0] as [number, number];
-    
+
     // 모든 마커의 중심점 계산
     const avgLat = items.reduce((sum, item) => sum + item.lat, 0) / items.length;
     const avgLng = items.reduce((sum, item) => sum + item.lng, 0) / items.length;
-    
+
     return [avgLat, avgLng] as [number, number];
   }, [items]);
 
   const initialZoom = useMemo(() => {
-    // 모바일에서는 MapBoundsFitter가 자동으로 조정하므로 기본값 사용
     return 2;
   }, []);
-  
+
+  if (!mounted) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-gray-100">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    );
+  }
+
   return (
-    <MapContainer 
+    <MapContainer
       center={initialCenter}
       zoom={initialZoom}
-      style={{ height: "100%", width: "100%" }} 
+      style={{ height: "100%", width: "100%" }}
       scrollWheelZoom={true}
       className="z-0"
     >
@@ -244,7 +256,7 @@ export default function WorldMap({
 
       {/* N 버튼 및 좌측 하단 컨트롤 제거 */}
       <RemoveControls />
-      
+
       {/* 모바일에서 bounds 자동 맞추기 */}
       <MapBoundsFitter items={items} />
 

@@ -1,5 +1,6 @@
 import "leaflet/dist/leaflet.css";
 import "leaflet-defaulticon-compatibility/dist/leaflet-defaulticon-compatibility.css";
+import "flag-icons/css/flag-icons.min.css";
 import "./globals.css";
 import type { Metadata } from "next";
 
