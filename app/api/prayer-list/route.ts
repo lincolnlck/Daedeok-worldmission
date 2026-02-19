@@ -45,16 +45,36 @@ export async function GET(req: Request) {
       redirect: "follow",
     });
 
+    const text = await res.text();
+    
     if (!res.ok) {
-      const text = await res.text();
-      console.error("GAS prayerList error:", res.status, text.substring(0, 200));
+      console.error("GAS prayerList error:", res.status, text.substring(0, 500));
       return NextResponse.json(
-        { success: false, items: [], error: `GAS error: ${res.status}` },
+        { success: false, items: [], error: `GAS error: ${res.status} - ${text.substring(0, 200)}` },
         { status: 502 }
       );
     }
 
-    const data = (await res.json()) as PrayerListResponse;
+    let data: PrayerListResponse;
+    try {
+      data = JSON.parse(text) as PrayerListResponse;
+    } catch (parseErr) {
+      console.error("GAS prayerList JSON parse error:", text.substring(0, 500));
+      return NextResponse.json(
+        { success: false, items: [], error: `Invalid JSON response: ${text.substring(0, 200)}` },
+        { status: 502 }
+      );
+    }
+
+    // GAS에서 "unknown action" 에러가 오는 경우 확인
+    if (data.error === "unknown action" || (!data.success && !data.items)) {
+      console.error("GAS returned unknown action or error:", data);
+      return NextResponse.json(
+        { success: false, items: [], error: data.error || "unknown action" },
+        { status: 502 }
+      );
+    }
+
     cached = { data, expiresAt: now + CACHE_TTL_MS };
     return NextResponse.json(data);
   } catch (err: unknown) {
