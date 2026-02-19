@@ -115,6 +115,7 @@ export default function FavoritesPage() {
   const [prayerFavKeys, setPrayerFavKeys] = useState<Set<string>>(new Set());
   const [fontSizePx, setFontSizePx] = useState(DEFAULT_FONT_SIZE);
   const [cardImages, setCardImages] = useState<Map<string, ImageItem[]>>(new Map());
+  const [isPrinting, setIsPrinting] = useState(false);
 
   useEffect(() => {
     try {
@@ -246,7 +247,9 @@ export default function FavoritesPage() {
       return;
     }
 
-    // 기도편지 포함 시 이미지 로딩
+    setIsPrinting(true);
+
+    try {
     const newCardImages = new Map<string, ImageItem[]>();
     if (options.includePrayerLetters) {
       const imagePromises: Promise<void>[] = [];
@@ -367,13 +370,9 @@ export default function FavoritesPage() {
             const imgDiv = document.createElement("div");
             imgDiv.className = "print-prayer-letter-image";
             const imgEl = document.createElement("img");
-            // Google Drive 이미지 URL: fileId를 사용하여 원본 이미지 URL 생성
-            // GAS에서 반환하는 URL: https://drive.google.com/thumbnail?id={fileId}&sz=w2000
-            // 인쇄용으로는 원본 이미지가 필요하므로 uc?export=view 형식 사용
-            const imageUrl = `https://drive.google.com/uc?export=view&id=${img.fileId}`;
+            const imageUrl = img.url.replace("sz=w2000", "sz=w4000");
             imgEl.src = imageUrl;
             imgEl.alt = img.name || "기도편지";
-            imgEl.crossOrigin = "anonymous";
             imgDiv.appendChild(imgEl);
             cardDiv.appendChild(imgDiv);
           }
@@ -404,12 +403,16 @@ export default function FavoritesPage() {
     // 인쇄 실행
     setTimeout(() => {
       window.print();
-      // 인쇄 후 정리
       setTimeout(() => {
         printContent.remove();
         if (styleEl) styleEl.remove();
+        setIsPrinting(false);
       }, 100);
     }, 100);
+
+    } catch {
+      setIsPrinting(false);
+    }
   };
 
   if (loading) {
@@ -502,7 +505,7 @@ export default function FavoritesPage() {
                   </button>
                 </div>
               </div>
-              <PrintControls onPrint={handlePrint} />
+              <PrintControls onPrint={handlePrint} isPrinting={isPrinting} />
             </div>
             <div
               className="space-y-4"

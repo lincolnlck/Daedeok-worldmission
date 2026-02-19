@@ -15,9 +15,10 @@ type PrintControlsProps = {
     includePrayerLetters: boolean;
     fontSize: number;
   }) => void;
+  isPrinting?: boolean;
 };
 
-export default function PrintControls({ onPrint }: PrintControlsProps) {
+export default function PrintControls({ onPrint, isPrinting = false }: PrintControlsProps) {
   const [printIncludePrayerList, setPrintIncludePrayerList] = useState(true);
   const [printIncludePrayerLetters, setPrintIncludePrayerLetters] = useState(false);
   const [printFontSizePx, setPrintFontSizePx] = useState(DEFAULT_PRINT_FONT_SIZE);
@@ -148,9 +149,10 @@ export default function PrintControls({ onPrint }: PrintControlsProps) {
       <button
         type="button"
         onClick={handlePrint}
-        className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 transition-colors shadow-sm"
+        disabled={isPrinting}
+        className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shadow-sm"
       >
-        인쇄
+        {isPrinting ? "준비 중..." : "인쇄"}
       </button>
     </div>
   );
