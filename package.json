@@ -10,6 +10,7 @@
     "generate:countries": "node scripts/generate-country-centers.mjs"
   },
   "dependencies": {
+    "flag-icons": "^7.5.0",
     "leaflet": "^1.9.4",
     "leaflet-defaulticon-compatibility": "^0.1.2",
     "next": "16.1.6",

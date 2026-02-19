@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-
-type ImageItem = { fileId: string; name: string; url: string };
+import { fetchImages, type ImageItem } from "@/app/lib/imagesCache";
 
 // 파일명에서 날짜 추출 함수
 function extractDateFromName(name: string): Date | null {
@@ -99,6 +98,21 @@ export default function ImageViewerPage() {
     zoomReset();
   }, [currentIndex]);
 
+  // 다음/이전 이미지 프리로드 (장 넘길 때 즉시 표시)
+  useEffect(() => {
+    if (images.length === 0) return;
+    const prevIdx = currentIndex - 1;
+    const nextIdx = currentIndex + 1;
+    if (prevIdx >= 0 && images[prevIdx]?.url) {
+      const img = new Image();
+      img.src = images[prevIdx].url;
+    }
+    if (nextIdx < images.length && images[nextIdx]?.url) {
+      const img = new Image();
+      img.src = images[nextIdx].url;
+    }
+  }, [currentIndex, images]);
+
   // 마우스 휠로 확대/축소
   useEffect(() => {
     const container = imageContainerRef.current;
@@ -140,23 +154,16 @@ export default function ImageViewerPage() {
   useEffect(() => {
     if (!folderId) return;
 
-    // 선교사 정보 가져오기
-    fetch("/api/missionaries")
-      .then((r) => r.json())
-      .then((d) => {
-        const missionary = d.items?.find((item: any) => item.folderId === folderId);
+    setLoading(true);
+    Promise.all([
+      fetch("/api/missionaries").then((r) => r.json()),
+      fetchImages(folderId),
+    ])
+      .then(([missionariesData, { images: imageList }]) => {
+        const missionary = missionariesData.items?.find((item: { folderId: string }) => item.folderId === folderId);
         if (missionary) {
           setMissionaryName(missionary.name || missionary.folderName || "");
         }
-      })
-      .catch(() => {});
-
-    // 이미지 가져오기
-    setLoading(true);
-    fetch(`/api/images?folderId=${encodeURIComponent(folderId)}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const imageList = d.images ?? [];
         setImages(sortImages(imageList));
         setCurrentIndex(0);
       })

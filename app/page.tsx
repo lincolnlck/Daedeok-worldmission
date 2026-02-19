@@ -5,9 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { countryCenters } from "./data/countryCenters";
 import { resolveCountryKey, customRegionCenters } from "./data/countryAliases";
+import { getCountryIso2 } from "./data/countryIso2";
 import Header from "./components/Header";
 import ImageModal from "./components/ImageModal";
 import StatsDashboard from "./components/StatsDashboard";
+import { fetchImages } from "./lib/imagesCache";
 
 type ApiItem = {
   folderId: string;
@@ -249,22 +251,30 @@ export default function Home() {
     };
   }, [mapped, filtered]);
 
-  const latestUpdateNotice = useMemo(() => {
+  const latestUpdatesList = useMemo(() => {
     const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
     const now = Date.now();
     const cutoff = now - THIRTY_DAYS_MS;
-    let latest: MissionaryItem | null = null;
+    const list: { missionary: MissionaryItem; dateLabel: string }[] = [];
     for (const m of mapped) {
       const t = m.updatedAtMs ?? 0;
       if (t < cutoff) continue;
-      if (!latest || t > (latest.updatedAtMs ?? 0)) latest = m;
+      const d = new Date(t);
+      list.push({ missionary: m, dateLabel: `${d.getMonth() + 1}월 ${d.getDate()}일` });
     }
-    if (!latest) return null;
-    const d = new Date(latest.updatedAtMs!);
-    const month = d.getMonth() + 1;
-    const day = d.getDate();
-    return { missionary: latest, dateLabel: `${month}월 ${day}일` };
+    list.sort((a, b) => (b.missionary.updatedAtMs ?? 0) - (a.missionary.updatedAtMs ?? 0));
+    return list;
   }, [mapped]);
+
+  const [latestNoticeIndex, setLatestNoticeIndex] = useState(0);
+
+  useEffect(() => {
+    if (latestUpdatesList.length <= 1) return;
+    const id = setInterval(() => {
+      setLatestNoticeIndex((i) => (i + 1) % latestUpdatesList.length);
+    }, 8000);
+    return () => clearInterval(id);
+  }, [latestUpdatesList.length]);
 
   useEffect(() => {
     if (!selected) {
@@ -272,9 +282,8 @@ export default function Home() {
       return;
     }
     setLoadingImages(true);
-    fetch(`/api/images?folderId=${encodeURIComponent(selected.folderId)}`)
-      .then((r) => r.json())
-      .then((d) => setImages(d.images ?? []))
+    fetchImages(selected.folderId)
+      .then(({ images }) => setImages(images))
       .catch((err) => {
         console.error("Failed to load images:", err);
         setImages([]);
@@ -338,16 +347,35 @@ export default function Home() {
         </select>
       </div>
 
-      {/* 최근 업데이트 알림 (지난 30일 이내 있을 때만) */}
-      {latestUpdateNotice && (
-        <button
-          type="button"
-          onClick={() => router.push(`/viewer/${latestUpdateNotice.missionary.folderId}`)}
-          className="w-full mb-3 text-left rounded-lg px-3 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-sm hover:bg-amber-100 active:bg-amber-100 transition-colors touch-manipulation"
-        >
-          <span className="font-medium">{latestUpdateNotice.missionary.name} 선교사님</span>의 기도편지가 {latestUpdateNotice.dateLabel} 업데이트되었습니다.
-        </button>
-      )}
+      {/* 최근 업데이트 소식 (지난 30일 이내, 8초마다 순환) */}
+      {latestUpdatesList.length > 0 && (() => {
+        const current = latestUpdatesList[latestNoticeIndex % latestUpdatesList.length];
+        const { missionary, dateLabel } = current;
+        return (
+          <button
+            type="button"
+            onClick={() => router.push(`/viewer/${missionary.folderId}`)}
+            className="w-full mb-3 text-left rounded-lg px-3 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-sm hover:bg-amber-100 active:bg-amber-100 transition-colors touch-manipulation"
+          >
+            {missionary.country?.trim() === "C국" ? (
+              <span
+                style={{ display: "inline-block", width: 18, height: 14, flexShrink: 0, marginRight: 6, backgroundColor: "#dc2626", borderRadius: 2 }}
+                aria-hidden
+              />
+            ) : (() => {
+              const iso2 = getCountryIso2(resolveCountryKey(missionary.country, countryCenters));
+              return iso2 ? (
+                <span
+                  className={`fi fi-${iso2}`}
+                  style={{ display: "inline-block", width: 18, height: 14, flexShrink: 0, marginRight: 6 }}
+                  aria-hidden
+                />
+              ) : null;
+            })()}
+            <span className="font-medium">{missionary.name} 선교사님</span>의 기도편지가 {dateLabel} 업데이트되었습니다.
+          </button>
+        );
+      })()}
 
       {/* 정렬 */}
       <div className="mb-3">
@@ -439,9 +467,46 @@ export default function Home() {
                     )}
                   </button>
                   <div className="min-w-0 flex-1">
-                    <div className="font-semibold text-gray-900 text-sm md:text-base">{m.name} 선교사</div>
+                    <div className="font-semibold text-gray-900 text-sm md:text-base flex items-center gap-2 min-w-0">
+                      {(() => {
+                        const rawCountry = m.country?.trim();
+                        if (rawCountry === "C국") {
+                          return (
+                            <span
+                              style={{ display: "inline-block", width: 20, height: 15, flexShrink: 0, backgroundColor: "#dc2626", borderRadius: 2 }}
+                              title={m.country || undefined}
+                              aria-hidden
+                            />
+                          );
+                        }
+                        const countryKey = resolveCountryKey(m.country, countryCenters);
+                        const iso2 = getCountryIso2(countryKey);
+                        return iso2 ? (
+                          <span
+                            className={`fi fi-${iso2}`}
+                            style={{ display: "inline-block", width: 20, height: 15, flexShrink: 0 }}
+                            title={m.country || undefined}
+                            aria-hidden
+                          />
+                        ) : null;
+                      })()}
+                      <span className="truncate">{m.name} 선교사</span>
+                    </div>
                     <div className="text-xs text-gray-600 mt-0.5">{m.country || "국가 미지정"}</div>
                   </div>
+                  {m.updatedAtMs != null ? (
+                    <span className="flex-shrink-0 text-[10px] md:text-xs text-gray-500" title={(() => {
+                      const d = new Date(m.updatedAtMs);
+                      return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
+                    })()}>
+                      {(() => {
+                        const d = new Date(m.updatedAtMs!);
+                        return `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, "0")}`;
+                      })()}
+                    </span>
+                  ) : (
+                    <span className="flex-shrink-0 text-[10px] md:text-xs text-gray-400">-</span>
+                  )}
                 </div>
               );
             })
@@ -458,7 +523,31 @@ export default function Home() {
       {selected && (
         <div className="space-y-3 md:space-y-4 border-t pt-3 md:pt-4">
           <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-3 md:p-4 border border-blue-100">
-            <div className="text-lg md:text-xl font-bold text-gray-900 mb-1">{selected.name}</div>
+            <div className="text-lg md:text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
+              {(() => {
+                const rawCountry = selected.country?.trim();
+                if (rawCountry === "C국") {
+                  return (
+                    <span
+                      style={{ display: "inline-block", width: 28, height: 21, flexShrink: 0, backgroundColor: "#dc2626", borderRadius: 2 }}
+                      title={selected.country || undefined}
+                      aria-hidden
+                    />
+                  );
+                }
+                const countryKey = resolveCountryKey(selected.country, countryCenters);
+                const iso2 = getCountryIso2(countryKey);
+                return iso2 ? (
+                  <span
+                    className={`fi fi-${iso2}`}
+                    style={{ display: "inline-block", width: 28, height: 21, flexShrink: 0 }}
+                    title={selected.country || undefined}
+                    aria-hidden
+                  />
+                ) : null;
+              })()}
+              <span>{selected.name}</span>
+            </div>
             <div className="text-xs md:text-sm text-gray-600 mb-1">📍 {selected.country || "국가 미지정"}</div>
             {selected.ministry && (
               <div className="text-xs md:text-sm text-gray-700 mt-2">{selected.ministry}</div>
