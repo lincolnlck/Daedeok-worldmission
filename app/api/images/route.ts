@@ -4,7 +4,7 @@ const CACHE_TTL_MS = 2 * 60 * 1000; // 2분
 const imagesCache = new Map<string, { data: { images: unknown[] }; expiresAt: number }>();
 
 export async function GET(req: Request) {
-  const base = process.env.APPS_SCRIPT_EXEC_URL;
+  const base = process.env.APPS_SCRIPT_EXEC_URL?.trim();
   if (!base) return NextResponse.json({ error: "Missing APPS_SCRIPT_EXEC_URL" }, { status: 500 });
 
   const { searchParams } = new URL(req.url);
@@ -23,8 +23,10 @@ export async function GET(req: Request) {
   }
 
   try {
-    const url = `${base}?action=images&folderId=${encodeURIComponent(folderId)}`;
-    const res = await fetch(url, {
+    const urlObj = new URL(base);
+    urlObj.searchParams.set("action", "images");
+    urlObj.searchParams.set("folderId", folderId);
+    const res = await fetch(urlObj.toString(), {
       cache: "no-store",
       redirect: "follow",
     });

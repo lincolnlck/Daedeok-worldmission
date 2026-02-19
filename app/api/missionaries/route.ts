@@ -5,7 +5,7 @@ const CACHE_TTL_MS = 5 * 60 * 1000; // 5분
 let cached: { data: { items: unknown[] }; expiresAt: number } | null = null;
 
 export async function GET(req: Request) {
-  const base = process.env.APPS_SCRIPT_EXEC_URL;
+  const base = process.env.APPS_SCRIPT_EXEC_URL?.trim();
   if (!base) return NextResponse.json({ error: "Missing APPS_SCRIPT_EXEC_URL" }, { status: 500 });
 
   const { searchParams } = new URL(req.url);
@@ -19,8 +19,9 @@ export async function GET(req: Request) {
   }
 
   try {
-    const url = `${base}?action=missionaries`;
-    const res = await fetch(url, {
+    const urlObj = new URL(base);
+    urlObj.searchParams.set("action", "missionaries");
+    const res = await fetch(urlObj.toString(), {
       cache: "no-store",
       redirect: "follow",
     });

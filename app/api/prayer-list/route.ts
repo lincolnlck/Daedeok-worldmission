@@ -20,7 +20,7 @@ export type PrayerListResponse = {
 };
 
 export async function GET(req: Request) {
-  const base = process.env.APPS_SCRIPT_EXEC_URL;
+  const base = process.env.APPS_SCRIPT_EXEC_URL?.trim();
   if (!base) {
     return NextResponse.json(
       { success: false, items: [], error: "Missing APPS_SCRIPT_EXEC_URL" },
@@ -39,8 +39,9 @@ export async function GET(req: Request) {
   }
 
   try {
-    const url = `${base}?action=prayerList`;
-    const res = await fetch(url, {
+    const urlObj = new URL(base);
+    urlObj.searchParams.set("action", "prayerList");
+    const res = await fetch(urlObj.toString(), {
       cache: "no-store",
       redirect: "follow",
     });
