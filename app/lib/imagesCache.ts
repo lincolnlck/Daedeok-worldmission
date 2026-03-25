@@ -6,7 +6,13 @@
 const CACHE_KEY_PREFIX = "mission-prayer-images-";
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5분
 
-export type ImageItem = { fileId: string; name: string; url: string };
+export type ImageItem = {
+  fileId: string;
+  name: string;
+  url: string;
+  updatedAtMs?: number;
+  updatedAt?: string;
+};
 
 type CachedEntry = { images: ImageItem[]; expiresAt: number };
 

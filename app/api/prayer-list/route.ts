@@ -59,7 +59,7 @@ export async function GET(req: Request) {
     let data: PrayerListResponse;
     try {
       data = JSON.parse(text) as PrayerListResponse;
-    } catch (parseErr) {
+    } catch {
       console.error("GAS prayerList JSON parse error:", text.substring(0, 500));
       return NextResponse.json(
         { success: false, items: [], error: `Invalid JSON response: ${text.substring(0, 200)}` },

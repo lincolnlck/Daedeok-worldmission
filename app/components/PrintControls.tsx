@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 const PRINT_FONT_SIZE_STORAGE_KEY = "mission-prayer-print-font-size";
 const PRINT_INCLUDE_PRAYER_LIST_KEY = "mission-prayer-print-include-prayer-list";
@@ -18,34 +18,57 @@ type PrintControlsProps = {
   isPrinting?: boolean;
 };
 
-export default function PrintControls({ onPrint, isPrinting = false }: PrintControlsProps) {
-  const [printIncludePrayerList, setPrintIncludePrayerList] = useState(true);
-  const [printIncludePrayerLetters, setPrintIncludePrayerLetters] = useState(false);
-  const [printFontSizePx, setPrintFontSizePx] = useState(DEFAULT_PRINT_FONT_SIZE);
+function readStoredFontSize(): number {
+  if (typeof window === "undefined") return DEFAULT_PRINT_FONT_SIZE;
 
-  useEffect(() => {
-    try {
-      const savedFontSize = localStorage.getItem(PRINT_FONT_SIZE_STORAGE_KEY);
-      if (savedFontSize != null) {
-        const n = parseInt(savedFontSize, 10);
-        if (Number.isFinite(n) && n >= MIN_PRINT_FONT_SIZE && n <= MAX_PRINT_FONT_SIZE) {
-          setPrintFontSizePx(n);
-        }
+  try {
+    const savedFontSize = localStorage.getItem(PRINT_FONT_SIZE_STORAGE_KEY);
+    if (savedFontSize != null) {
+      const parsed = parseInt(savedFontSize, 10);
+      if (
+        Number.isFinite(parsed) &&
+        parsed >= MIN_PRINT_FONT_SIZE &&
+        parsed <= MAX_PRINT_FONT_SIZE
+      ) {
+        return parsed;
       }
-
-      const savedPrayerList = localStorage.getItem(PRINT_INCLUDE_PRAYER_LIST_KEY);
-      if (savedPrayerList === "false") {
-        setPrintIncludePrayerList(false);
-      }
-
-      const savedPrayerLetters = localStorage.getItem(PRINT_INCLUDE_PRAYER_LETTERS_KEY);
-      if (savedPrayerLetters === "true") {
-        setPrintIncludePrayerLetters(true);
-      }
-    } catch {
-      // ignore
     }
-  }, []);
+  } catch {
+    // ignore
+  }
+
+  return DEFAULT_PRINT_FONT_SIZE;
+}
+
+function readStoredPrayerListEnabled(): boolean {
+  if (typeof window === "undefined") return true;
+
+  try {
+    return localStorage.getItem(PRINT_INCLUDE_PRAYER_LIST_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function readStoredPrayerLettersEnabled(): boolean {
+  if (typeof window === "undefined") return false;
+
+  try {
+    return localStorage.getItem(PRINT_INCLUDE_PRAYER_LETTERS_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export default function PrintControls({
+  onPrint,
+  isPrinting = false,
+}: PrintControlsProps) {
+  const [printIncludePrayerList, setPrintIncludePrayerList] = useState(readStoredPrayerListEnabled);
+  const [printIncludePrayerLetters, setPrintIncludePrayerLetters] = useState(
+    readStoredPrayerLettersEnabled
+  );
+  const [printFontSizePx, setPrintFontSizePx] = useState(readStoredFontSize);
 
   const changePrintFontSize = (delta: number) => {
     setPrintFontSizePx((prev) => {
@@ -72,7 +95,7 @@ export default function PrintControls({ onPrint, isPrinting = false }: PrintCont
   const handlePrayerLettersToggle = () => {
     const next = !printIncludePrayerLetters;
     setPrintIncludePrayerLetters(next);
-    // 기도편지를 체크하면 기도 제목도 함께 체크
+
     if (next && !printIncludePrayerList) {
       setPrintIncludePrayerList(true);
       try {
@@ -81,19 +104,12 @@ export default function PrintControls({ onPrint, isPrinting = false }: PrintCont
         // ignore
       }
     }
+
     try {
       localStorage.setItem(PRINT_INCLUDE_PRAYER_LETTERS_KEY, String(next));
     } catch {
       // ignore
     }
-  };
-
-  const handlePrint = () => {
-    onPrint({
-      includePrayerList: printIncludePrayerList,
-      includePrayerLetters: printIncludePrayerLetters,
-      fontSize: printFontSizePx,
-    });
   };
 
   return (
@@ -131,11 +147,9 @@ export default function PrintControls({ onPrint, isPrinting = false }: PrintCont
           className="w-7 h-7 rounded border border-gray-300 bg-white text-gray-700 font-bold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-xs"
           aria-label="인쇄 글자 크기 줄이기"
         >
-          −
+          -
         </button>
-        <span className="min-w-[2rem] text-center text-sm text-gray-600">
-          {printFontSizePx}
-        </span>
+        <span className="min-w-[2rem] text-center text-sm text-gray-600">{printFontSizePx}</span>
         <button
           type="button"
           onClick={() => changePrintFontSize(1)}
@@ -148,7 +162,13 @@ export default function PrintControls({ onPrint, isPrinting = false }: PrintCont
       </div>
       <button
         type="button"
-        onClick={handlePrint}
+        onClick={() =>
+          onPrint({
+            includePrayerList: printIncludePrayerList,
+            includePrayerLetters: printIncludePrayerLetters,
+            fontSize: printFontSizePx,
+          })
+        }
         disabled={isPrinting}
         className="px-4 py-2 rounded-lg bg-red-600 text-white font-medium hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors shadow-sm"
       >

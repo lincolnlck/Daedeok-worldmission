@@ -16,6 +16,18 @@ function getFavoriteKey(item: PrayerListItem): string {
   return `${item.name ?? ""}|${item.country ?? ""}`;
 }
 
+function readFavoriteKeys(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+
+  try {
+    const raw = localStorage.getItem(PRAYER_LIST_FAVORITES_KEY);
+    const arr = raw ? (JSON.parse(raw) as string[]) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
 export default function PrayerListPage() {
   const [data, setData] = useState<{
     success: boolean;
@@ -27,19 +39,7 @@ export default function PrayerListPage() {
   const [loading, setLoading] = useState(true);
   const [expandedOrder, setExpandedOrder] = useState<number | null>(null);
   const [sortBy, setSortBy] = useState<"default" | "name" | "country">("default");
-  const [favoriteKeys, setFavoriteKeys] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(PRAYER_LIST_FAVORITES_KEY);
-      const arr = raw ? (JSON.parse(raw) as string[]) : [];
-      if (Array.isArray(arr) && arr.length > 0) {
-        setFavoriteKeys(new Set(arr));
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
+  const [favoriteKeys, setFavoriteKeys] = useState(readFavoriteKeys);
 
   const toggleFavorite = useCallback((key: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -66,9 +66,9 @@ export default function PrayerListPage() {
         setData(prayerData);
         const list = Array.isArray(missionaryData?.items) ? missionaryData.items : [];
         setMissionaries(
-          list.map((m: { name?: string; folderId?: string }) => ({
-            name: m.name ?? "",
-            folderId: m.folderId ?? "",
+          list.map((missionary: { name?: string; folderId?: string }) => ({
+            name: missionary.name ?? "",
+            folderId: missionary.folderId ?? "",
           }))
         );
       })
@@ -81,35 +81,39 @@ export default function PrayerListPage() {
 
   const sortedItems = useMemo(() => {
     const items = data?.success && data.items ? [...data.items] : [];
+
     if (sortBy === "name") {
       items.sort((a, b) => (a.name || "").localeCompare(b.name || "", "ko"));
     } else if (sortBy === "country") {
       items.sort((a, b) => {
-        const c = (a.country || "").localeCompare(b.country || "", "ko");
-        return c !== 0 ? c : (a.name || "").localeCompare(b.name || "", "ko");
+        const countryCompare = (a.country || "").localeCompare(b.country || "", "ko");
+        return countryCompare !== 0
+          ? countryCompare
+          : (a.name || "").localeCompare(b.name || "", "ko");
       });
     }
+
     return items;
-  }, [data?.items, data?.success, sortBy]);
+  }, [data, sortBy]);
 
   const displayItems = useMemo(() => {
-    const favMatched: PrayerListItem[] = [];
-    const favUnmatched: PrayerListItem[] = [];
-    const restMatched: PrayerListItem[] = [];
-    const restUnmatched: PrayerListItem[] = [];
+    const favoriteMatched: PrayerListItem[] = [];
+    const favoriteUnmatched: PrayerListItem[] = [];
+    const otherMatched: PrayerListItem[] = [];
+    const otherUnmatched: PrayerListItem[] = [];
+
     for (const item of sortedItems) {
-      const isFav = favoriteKeys.has(getFavoriteKey(item));
+      const isFavorite = favoriteKeys.has(getFavoriteKey(item));
       const matched = !!matchMissionaryByName(missionaries, item.name);
-      if (isFav) {
-        if (matched) favMatched.push(item);
-        else favUnmatched.push(item);
-      } else {
-        if (matched) restMatched.push(item);
-        else restUnmatched.push(item);
-      }
+
+      if (isFavorite && matched) favoriteMatched.push(item);
+      else if (isFavorite) favoriteUnmatched.push(item);
+      else if (matched) otherMatched.push(item);
+      else otherUnmatched.push(item);
     }
-    return [...favMatched, ...favUnmatched, ...restMatched, ...restUnmatched];
-  }, [sortedItems, favoriteKeys, missionaries]);
+
+    return [...favoriteMatched, ...favoriteUnmatched, ...otherMatched, ...otherUnmatched];
+  }, [favoriteKeys, missionaries, sortedItems]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -125,7 +129,9 @@ export default function PrayerListPage() {
             </Link>
             <div>
               <h1 className="text-lg md:text-xl font-bold">선교사를 위한 기도 제목</h1>
-              <p className="text-blue-100 text-xs md:text-sm">※ 기도제목은 분기마다 한번씩 업데이트가 되며, 최신의 기도제목은 기도편지에서 확인하실 수 있습니다.</p>
+              <p className="text-blue-100 text-xs md:text-sm">
+                기도 제목은 분기마다 한 번씩 갱신되며 최신 내용은 기도편지에서 확인할 수 있습니다.
+              </p>
             </div>
           </div>
         </div>
@@ -162,58 +168,38 @@ export default function PrayerListPage() {
         {!loading && data?.success && data.items.length === 0 && (
           <div className="text-center py-16 text-gray-500 text-sm">
             <p>등록된 기도 제목이 없습니다.</p>
-            <p className="mt-1">Drive에 &quot;선교사를_위한_기도문&quot;으로 시작하는 파일을 올려 주세요.</p>
+            <p className="mt-1">Drive에 선교사를 위한 기도문 파일이 있는지 확인해 주세요.</p>
           </div>
         )}
 
         {!loading && data?.success && data.items.length > 0 && (
           <>
-            {data.fileName && (
-              <p className="text-xs text-gray-500 mb-4">📄 {data.fileName}</p>
-            )}
+            {data.fileName && <p className="text-xs text-gray-500 mb-4">파일: {data.fileName}</p>}
 
             <div className="mb-4">
               <span className="text-xs md:text-sm font-medium text-gray-600 mr-2">정렬:</span>
               <div className="flex gap-1.5 mt-1">
-                <button
-                  type="button"
-                  onClick={() => setSortBy("default")}
-                  className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors ${
-                    sortBy === "default"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  기본
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSortBy("name")}
-                  className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors ${
-                    sortBy === "name"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  이름
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSortBy("country")}
-                  className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors ${
-                    sortBy === "country"
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-                  }`}
-                >
-                  국가
-                </button>
+                {(["default", "name", "country"] as const).map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setSortBy(value)}
+                    className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors ${
+                      sortBy === value
+                        ? "bg-blue-600 text-white"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                    }`}
+                  >
+                    {value === "default" ? "기본" : value === "name" ? "이름" : "국가"}
+                  </button>
+                ))}
               </div>
             </div>
 
             {favoriteKeys.size > 0 && (
-              <h3 className="text-xs md:text-sm font-semibold text-amber-600 mb-1.5">⭐ 즐겨찾기</h3>
+              <h3 className="text-xs md:text-sm font-semibold text-amber-600 mb-1.5">즐겨찾기</h3>
             )}
+
             <div className="space-y-2">
               {displayItems.map((item) => {
                 const isExpanded = expandedOrder === item.order;
@@ -221,8 +207,8 @@ export default function PrayerListPage() {
                 const iso2 = getCountryIso2(countryKey);
                 const isCCountry = item.country?.trim() === "C국";
                 const folderId = matchMissionaryByName(missionaries, item.name);
-                const favKey = getFavoriteKey(item);
-                const isFav = favoriteKeys.has(favKey);
+                const favoriteKey = getFavoriteKey(item);
+                const isFavorite = favoriteKeys.has(favoriteKey);
 
                 return (
                   <div
@@ -232,9 +218,7 @@ export default function PrayerListPage() {
                     <div
                       role="button"
                       tabIndex={0}
-                      onClick={() =>
-                        setExpandedOrder(isExpanded ? null : item.order)
-                      }
+                      onClick={() => setExpandedOrder(isExpanded ? null : item.order)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
@@ -245,41 +229,28 @@ export default function PrayerListPage() {
                     >
                       <button
                         type="button"
-                        onClick={(e) => toggleFavorite(favKey, e)}
+                        onClick={(e) => toggleFavorite(favoriteKey, e)}
                         className="flex-shrink-0 w-7 h-7 rounded flex items-center justify-center text-gray-400 hover:text-amber-500 hover:bg-amber-50 transition-colors"
-                        aria-label={isFav ? "즐겨찾기 해제" : "즐겨찾기"}
-                        title={isFav ? "즐겨찾기 해제" : "즐겨찾기"}
+                        aria-label={isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}
+                        title={isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}
                       >
-                        {isFav ? (
-                          <svg className="w-5 h-5 text-amber-500" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                          </svg>
-                        ) : (
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                          </svg>
-                        )}
+                        {isFavorite ? "★" : "☆"}
                       </button>
+
                       <span className="flex-shrink-0 w-7 text-center text-sm font-medium text-gray-500">
                         {item.order}
                       </span>
+
                       {isCCountry ? (
-                        <span
-                          className="flex-shrink-0 w-5 h-4 rounded bg-red-600"
-                          aria-hidden
-                        />
+                        <span className="flex-shrink-0 w-5 h-4 rounded bg-red-600" aria-hidden />
                       ) : iso2 ? (
                         <span
                           className={`fi fi-${iso2}`}
-                          style={{
-                            display: "inline-block",
-                            width: 20,
-                            height: 15,
-                            flexShrink: 0,
-                          }}
+                          style={{ display: "inline-block", width: 20, height: 15, flexShrink: 0 }}
                           aria-hidden
                         />
                       ) : null}
+
                       <div className="min-w-0 flex-1">
                         <span className="font-semibold text-gray-900 text-sm md:text-base block truncate">
                           {item.name || "(이름 없음)"}
@@ -290,6 +261,7 @@ export default function PrayerListPage() {
                           </span>
                         )}
                       </div>
+
                       {folderId ? (
                         <Link
                           href={`/viewer/${folderId}`}
@@ -299,6 +271,7 @@ export default function PrayerListPage() {
                           기도편지
                         </Link>
                       ) : null}
+
                       <span
                         className={`flex-shrink-0 text-gray-400 transition-transform ${
                           isExpanded ? "rotate-180" : ""
@@ -308,6 +281,7 @@ export default function PrayerListPage() {
                         ▼
                       </span>
                     </div>
+
                     {isExpanded && item.prayerContent && (
                       <div className="px-4 pb-4 pt-0">
                         <div className="border-t border-gray-100 pt-3">
@@ -315,9 +289,7 @@ export default function PrayerListPage() {
                             {item.prayerContent}
                           </div>
                           {item.reference && (
-                            <p className="text-xs text-gray-500 mt-2">
-                              참고: {item.reference}
-                            </p>
+                            <p className="text-xs text-gray-500 mt-2">참고: {item.reference}</p>
                           )}
                         </div>
                       </div>

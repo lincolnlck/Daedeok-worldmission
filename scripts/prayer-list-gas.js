@@ -136,6 +136,7 @@ function parsePrayerText(content) {
  * 기도 제목 목록 조회 (Drive 최신 파일 파싱)
  * @returns {Object} { success: boolean, items: Array, fileName?: string, error?: string }
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function getPrayerListFromDrive() {
   try {
     var file = findNewestPrayerFile();

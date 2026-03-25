@@ -7,9 +7,8 @@ import { countryCenters } from "./data/countryCenters";
 import { resolveCountryKey, customRegionCenters } from "./data/countryAliases";
 import { getCountryIso2 } from "./data/countryIso2";
 import Header from "./components/Header";
-import ImageModal from "./components/ImageModal";
 import StatsDashboard from "./components/StatsDashboard";
-import { fetchImages } from "./lib/imagesCache";
+import { fetchImages, type ImageItem } from "./lib/imagesCache";
 
 type ApiItem = {
   folderId: string;
@@ -22,106 +21,93 @@ type ApiItem = {
 
 type MissionaryItem = ApiItem & { lat: number; lng: number };
 
-type ImageItem = { fileId: string; name: string; url: string };
-
 const WorldMap = dynamic(() => import("./components/WorldMap"), { ssr: false });
 
+const SIDEBAR_WIDTH_KEY = "mission-prayer-sidebar-width";
+const FAVORITES_KEY = "mission-prayer-favorites";
+const CACHE_KEY = "mission-prayer-missionaries";
+const DEFAULT_SIDEBAR_WIDTH = 420;
+
 function jitter(lat: number, lng: number, key: string) {
-  let h = 0;
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) % 100000;
-  const r1 = (h % 1000) / 1000;
-  const r2 = ((h / 1000) % 1000) / 1000;
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) % 100000;
+  }
+
+  const r1 = (hash % 1000) / 1000;
+  const r2 = ((hash / 1000) % 1000) / 1000;
   return { lat: lat + (r1 - 0.5) * 0.6, lng: lng + (r2 - 0.5) * 0.6 };
+}
+
+function readSidebarWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_SIDEBAR_WIDTH;
+
+  try {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed >= 280 && parsed <= 700) {
+      return parsed;
+    }
+  } catch {
+    // ignore
+  }
+
+  return DEFAULT_SIDEBAR_WIDTH;
+}
+
+function readFavoriteIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    const parsed = raw ? (JSON.parse(raw) as string[]) : [];
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function readCachedMissionaries(): ApiItem[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = sessionStorage.getItem(CACHE_KEY);
+    if (!raw) return [];
+
+    const cached = JSON.parse(raw) as { items?: ApiItem[] };
+    return Array.isArray(cached.items) ? cached.items : [];
+  } catch {
+    return [];
+  }
+}
+
+function formatUpdatedLabel(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+}
+
+function formatShortDate(timestampMs: number): string {
+  const date = new Date(timestampMs);
+  return `${date.getMonth() + 1}.${String(date.getDate()).padStart(2, "0")}`;
 }
 
 export default function Home() {
   const router = useRouter();
-  const [items, setItems] = useState<ApiItem[]>([]);
+  const [items, setItems] = useState<ApiItem[]>(readCachedMissionaries);
   const [selected, setSelected] = useState<MissionaryItem | null>(null);
   const [images, setImages] = useState<ImageItem[]>([]);
-  const [loadingItems, setLoadingItems] = useState(true);
+  const [loadingItems, setLoadingItems] = useState(() => readCachedMissionaries().length === 0);
   const [loadingImages, setLoadingImages] = useState(false);
-  const [q, setQ] = useState("");
-  const [selectedCountry, setSelectedCountry] = useState<string>("");
-  const [modalImage, setModalImage] = useState<ImageItem | null>(null);
+  const [query, setQuery] = useState("");
+  const [selectedCountry, setSelectedCountry] = useState("");
   const [sortBy, setSortBy] = useState<"name" | "country" | "updated">("name");
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
+  const [favoriteIds, setFavoriteIds] = useState(readFavoriteIds);
+  const [latestNoticeIndex, setLatestNoticeIndex] = useState(0);
+  const [referenceNow] = useState(() => Date.now());
 
-  const SIDEBAR_WIDTH_KEY = "mission-prayer-sidebar-width";
-  const [sidebarWidth, setSidebarWidth] = useState(420);
   const isResizingRef = useRef(false);
-  const lastWidthRef = useRef(420);
-
-  useEffect(() => {
-    try {
-      const w = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-      const n = w ? parseInt(w, 10) : NaN;
-      const width = Number.isFinite(n) && n >= 280 && n <= 700 ? n : 420;
-      setSidebarWidth(width);
-      lastWidthRef.current = width;
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const FAVORITES_KEY = "mission-prayer-favorites";
-  const [favoriteIds, setFavoriteIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(FAVORITES_KEY);
-      const arr = raw ? (JSON.parse(raw) as string[]) : [];
-      if (Array.isArray(arr) && arr.length > 0) {
-        setFavoriteIds(new Set(arr));
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const startResize = useCallback(() => {
-    isResizingRef.current = true;
-    const minW = 280;
-    const maxW = 700;
-    const onMove = (e: MouseEvent) => {
-      const w = Math.min(maxW, Math.max(minW, e.clientX));
-      lastWidthRef.current = w;
-      setSidebarWidth(w);
-    };
-    const onUp = () => {
-      isResizingRef.current = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      try {
-        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(lastWidthRef.current));
-      } catch {
-        // ignore
-      }
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-    };
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, []);
-
-  const toggleFavorite = useCallback((folderId: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setFavoriteIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(folderId)) next.delete(folderId);
-      else next.add(folderId);
-      try {
-        localStorage.setItem(FAVORITES_KEY, JSON.stringify([...next]));
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  }, []);
-
-  const CACHE_KEY = "mission-prayer-missionaries";
+  const lastWidthRef = useRef(sidebarWidth);
 
   const refreshMissionaries = useCallback((skipCache = false) => {
     try {
@@ -129,14 +115,14 @@ export default function Home() {
     } catch {
       // ignore
     }
+
     setLoadingItems(true);
-    const url = skipCache
-      ? `/api/missionaries?refresh=1&_=${Date.now()}`
-      : "/api/missionaries";
+    const url = skipCache ? `/api/missionaries?refresh=1&_=${Date.now()}` : "/api/missionaries";
+
     fetch(url, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => {
-        const list = d.items ?? [];
+      .then((res) => res.json())
+      .then((data) => {
+        const list = Array.isArray(data?.items) ? data.items : [];
         setItems(list);
         try {
           sessionStorage.setItem(CACHE_KEY, JSON.stringify({ items: list }));
@@ -152,170 +138,196 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const raw = typeof sessionStorage !== "undefined" ? sessionStorage.getItem(CACHE_KEY) : null;
-    if (raw) {
-      try {
-        const { items: cachedItems } = JSON.parse(raw) as { items: ApiItem[] };
-        if (Array.isArray(cachedItems) && cachedItems.length >= 0) {
-          setItems(cachedItems);
-          setLoadingItems(false);
-        }
-      } catch {
-        // ignore invalid cache
-      }
-    }
+    let cancelled = false;
 
     fetch("/api/missionaries")
-      .then((r) => r.json())
-      .then((d) => {
-        const list = d.items ?? [];
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        const list = Array.isArray(data?.items) ? data.items : [];
         setItems(list);
         try {
           sessionStorage.setItem(CACHE_KEY, JSON.stringify({ items: list }));
         } catch {
-          // ignore quota etc
+          // ignore
         }
       })
       .catch((err) => {
+        if (cancelled) return;
         console.error("Failed to load missionaries:", err);
         setItems([]);
       })
-      .finally(() => setLoadingItems(false));
+      .finally(() => {
+        if (!cancelled) setLoadingItems(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const mapped: MissionaryItem[] = useMemo(() => {
-    return items.map((m) => {
-      const key = resolveCountryKey(m.country, countryCenters);
-      const center =
-        countryCenters[key] ??
-        customRegionCenters[key] ??
-        { lat: 20, lng: 0 };
-      const j = jitter(center.lat, center.lng, m.folderName);
-      return { ...m, lat: j.lat, lng: j.lng };
+  useEffect(() => {
+    if (!selected) return;
+
+    let cancelled = false;
+
+    fetchImages(selected.folderId)
+      .then(({ images: nextImages }) => {
+        if (!cancelled) setImages(nextImages);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error("Failed to load images:", err);
+          setImages([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingImages(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  const startResize = useCallback(() => {
+    isResizingRef.current = true;
+
+    const onMove = (event: MouseEvent) => {
+      const width = Math.min(700, Math.max(280, event.clientX));
+      lastWidthRef.current = width;
+      setSidebarWidth(width);
+    };
+
+    const onUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+
+      try {
+        localStorage.setItem(SIDEBAR_WIDTH_KEY, String(lastWidthRef.current));
+      } catch {
+        // ignore
+      }
+
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
+
+  const toggleFavorite = useCallback((folderId: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    setFavoriteIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+
+      try {
+        localStorage.setItem(FAVORITES_KEY, JSON.stringify([...next]));
+      } catch {
+        // ignore
+      }
+
+      return next;
+    });
+  }, []);
+
+  const handleSelectMissionary = useCallback((missionary: MissionaryItem) => {
+    setSelected(missionary);
+    setLoadingImages(true);
+  }, []);
+
+  const mapped = useMemo<MissionaryItem[]>(() => {
+    return items.map((item) => {
+      const key = resolveCountryKey(item.country, countryCenters);
+      const center = countryCenters[key] ?? customRegionCenters[key] ?? { lat: 20, lng: 0 };
+      const adjusted = jitter(center.lat, center.lng, item.folderName);
+      return { ...item, lat: adjusted.lat, lng: adjusted.lng };
     });
   }, [items]);
 
   const countries = useMemo(() => {
-    const countrySet = new Set(mapped.map((m) => m.country).filter(Boolean));
+    const countrySet = new Set(mapped.map((item) => item.country).filter(Boolean));
     return Array.from(countrySet).sort();
   }, [mapped]);
 
   const filtered = useMemo(() => {
-    let result = mapped;
-    const s = q.trim().toLowerCase();
-    if (s) {
-      result = result.filter((m) =>
-        (m.name + m.country + m.ministry + m.folderName).toLowerCase().includes(s)
-      );
-    }
-    if (selectedCountry) {
-      result = result.filter((m) => m.country === selectedCountry);
-    }
-    return result;
-  }, [mapped, q, selectedCountry]);
+    const keyword = query.trim().toLowerCase();
 
-  const sortMissionaries = useCallback((list: MissionaryItem[]) => {
-    return [...list].sort((a, b) => {
-      if (sortBy === "name") {
-        return (a.name || "").localeCompare(b.name || "", "ko");
-      }
-      if (sortBy === "country") {
-        const c = (a.country || "").localeCompare(b.country || "", "ko");
-        return c !== 0 ? c : (a.name || "").localeCompare(b.name || "", "ko");
-      }
-      if (sortBy === "updated") {
-        const ta = a.updatedAtMs ?? 0;
-        const tb = b.updatedAtMs ?? 0;
-        return tb - ta;
-      }
-      return 0;
+    return mapped.filter((item) => {
+      const matchesKeyword =
+        !keyword ||
+        (item.name + item.country + item.ministry + item.folderName).toLowerCase().includes(keyword);
+      const matchesCountry = !selectedCountry || item.country === selectedCountry;
+      return matchesKeyword && matchesCountry;
     });
-  }, [sortBy]);
+  }, [mapped, query, selectedCountry]);
 
   const filteredWithFavoritesFirst = useMemo(() => {
-    const fav: MissionaryItem[] = [];
-    const rest: MissionaryItem[] = [];
-    for (const m of filtered) {
-      if (favoriteIds.has(m.folderId)) fav.push(m);
-      else rest.push(m);
+    const compare = (a: MissionaryItem, b: MissionaryItem) => {
+      if (sortBy === "country") {
+        const countryCompare = (a.country || "").localeCompare(b.country || "", "ko");
+        return countryCompare !== 0
+          ? countryCompare
+          : (a.name || "").localeCompare(b.name || "", "ko");
+      }
+
+      if (sortBy === "updated") {
+        return (b.updatedAtMs ?? 0) - (a.updatedAtMs ?? 0);
+      }
+
+      return (a.name || "").localeCompare(b.name || "", "ko");
+    };
+
+    const favorites: MissionaryItem[] = [];
+    const others: MissionaryItem[] = [];
+
+    for (const item of filtered) {
+      if (favoriteIds.has(item.folderId)) favorites.push(item);
+      else others.push(item);
     }
-    return [...sortMissionaries(fav), ...sortMissionaries(rest)];
-  }, [filtered, favoriteIds, sortMissionaries]);
+
+    return [...favorites.sort(compare), ...others.sort(compare)];
+  }, [favoriteIds, filtered, sortBy]);
 
   const stats = useMemo(() => {
-    const uniqueCountries = new Set(mapped.map((m) => m.country).filter(Boolean));
+    const uniqueCountries = new Set(mapped.map((item) => item.country).filter(Boolean));
     return {
       totalMissionaries: mapped.length,
       totalCountries: uniqueCountries.size,
       visibleCount: filtered.length,
     };
-  }, [mapped, filtered]);
+  }, [filtered.length, mapped]);
 
   const latestUpdatesList = useMemo(() => {
-    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const now = Date.now();
-    const cutoff = now - THIRTY_DAYS_MS;
-    const list: { missionary: MissionaryItem; dateLabel: string }[] = [];
-    for (const m of mapped) {
-      const t = m.updatedAtMs ?? 0;
-      if (t < cutoff) continue;
-      const d = new Date(t);
-      list.push({ missionary: m, dateLabel: `${d.getMonth() + 1}월 ${d.getDate()}일` });
-    }
-    list.sort((a, b) => (b.missionary.updatedAtMs ?? 0) - (a.missionary.updatedAtMs ?? 0));
-    return list;
-  }, [mapped]);
+    const cutoff = referenceNow - 30 * 24 * 60 * 60 * 1000;
 
-  const [latestNoticeIndex, setLatestNoticeIndex] = useState(0);
+    return mapped
+      .filter((item) => (item.updatedAtMs ?? 0) >= cutoff)
+      .sort((a, b) => (b.updatedAtMs ?? 0) - (a.updatedAtMs ?? 0))
+      .map((missionary) => ({
+        missionary,
+        dateLabel: formatUpdatedLabel(missionary.updatedAtMs ?? 0),
+      }));
+  }, [mapped, referenceNow]);
 
   useEffect(() => {
     if (latestUpdatesList.length <= 1) return;
-    const id = setInterval(() => {
-      setLatestNoticeIndex((i) => (i + 1) % latestUpdatesList.length);
+
+    const timer = setInterval(() => {
+      setLatestNoticeIndex((prev) => (prev + 1) % latestUpdatesList.length);
     }, 8000);
-    return () => clearInterval(id);
+
+    return () => clearInterval(timer);
   }, [latestUpdatesList.length]);
 
-  useEffect(() => {
-    if (!selected) {
-      setImages([]);
-      return;
-    }
-    setLoadingImages(true);
-    fetchImages(selected.folderId)
-      .then(({ images }) => setImages(images))
-      .catch((err) => {
-        console.error("Failed to load images:", err);
-        setImages([]);
-      })
-      .finally(() => setLoadingImages(false));
-  }, [selected]);
-
-  const openImageModal = (image: ImageItem) => {
-    setModalImage(image);
-  };
-
-  const closeImageModal = () => {
-    setModalImage(null);
-  };
-
-  const currentImageIndex = modalImage
-    ? images.findIndex((img) => img.fileId === modalImage.fileId)
-    : -1;
-
-  const nextImage = () => {
-    if (currentImageIndex < images.length - 1) {
-      setModalImage(images[currentImageIndex + 1]);
-    }
-  };
-
-  const prevImage = () => {
-    if (currentImageIndex > 0) {
-      setModalImage(images[currentImageIndex - 1]);
-    }
-  };
-
-  /* ---------- 사이드바 내용 (공통) ---------- */
   const sidebarContent = (
     <>
       <StatsDashboard
@@ -325,20 +337,19 @@ export default function Home() {
         isRefreshing={loadingItems}
       />
 
-      {/* 검색 및 필터 */}
       <div className="mb-4 space-y-2 md:space-y-3">
         <input
           className="w-full rounded-lg border border-gray-300 px-3 md:px-4 py-2.5 text-sm md:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all touch-manipulation"
-          placeholder="🔍 이름/나라로 검색..."
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+          placeholder="선교사 이름이나 국가 검색..."
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
         />
         <select
           className="w-full rounded-lg border border-gray-300 px-3 md:px-4 py-2.5 text-sm md:text-base focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white touch-manipulation"
           value={selectedCountry}
-          onChange={(e) => setSelectedCountry(e.target.value)}
+          onChange={(event) => setSelectedCountry(event.target.value)}
         >
-          <option value="">🌍 모든 국가</option>
+          <option value="">모든 국가</option>
           {countries.map((country) => (
             <option key={country} value={country}>
               {country}
@@ -347,162 +358,139 @@ export default function Home() {
         </select>
       </div>
 
-      {/* 최근 업데이트 소식 (지난 30일 이내, 8초마다 순환) */}
       {latestUpdatesList.length > 0 && (() => {
         const current = latestUpdatesList[latestNoticeIndex % latestUpdatesList.length];
-        const { missionary, dateLabel } = current;
+        const iso2 = getCountryIso2(resolveCountryKey(current.missionary.country, countryCenters));
+        const isCCountry = current.missionary.country?.trim() === "C국";
+
         return (
           <button
             type="button"
-            onClick={() => router.push(`/viewer/${missionary.folderId}`)}
+            onClick={() => router.push(`/viewer/${current.missionary.folderId}`)}
             className="w-full mb-3 text-left rounded-lg px-3 py-2.5 bg-amber-50 border border-amber-200 text-amber-800 text-sm hover:bg-amber-100 active:bg-amber-100 transition-colors touch-manipulation"
           >
-            {missionary.country?.trim() === "C국" ? (
+            {isCCountry ? (
               <span
-                style={{ display: "inline-block", width: 18, height: 14, flexShrink: 0, marginRight: 6, backgroundColor: "#dc2626", borderRadius: 2 }}
+                style={{
+                  display: "inline-block",
+                  width: 18,
+                  height: 14,
+                  flexShrink: 0,
+                  marginRight: 6,
+                  backgroundColor: "#dc2626",
+                  borderRadius: 2,
+                }}
                 aria-hidden
               />
-            ) : (() => {
-              const iso2 = getCountryIso2(resolveCountryKey(missionary.country, countryCenters));
-              return iso2 ? (
-                <span
-                  className={`fi fi-${iso2}`}
-                  style={{ display: "inline-block", width: 18, height: 14, flexShrink: 0, marginRight: 6 }}
-                  aria-hidden
-                />
-              ) : null;
-            })()}
-            <span className="font-medium">{missionary.name} 선교사님</span>의 기도편지가 {dateLabel} 업데이트되었습니다.
+            ) : iso2 ? (
+              <span
+                className={`fi fi-${iso2}`}
+                style={{ display: "inline-block", width: 18, height: 14, flexShrink: 0, marginRight: 6 }}
+                aria-hidden
+              />
+            ) : null}
+            <span className="font-medium">{current.missionary.name} 선교사님</span>의 기도편지가{" "}
+            {current.dateLabel} 업데이트되었습니다.
           </button>
         );
       })()}
 
-      {/* 정렬 */}
       <div className="mb-3">
         <span className="text-xs md:text-sm font-medium text-gray-600 mr-2">정렬:</span>
         <div className="flex gap-1.5 mt-1">
-          <button
-            type="button"
-            onClick={() => setSortBy("name")}
-            className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors touch-manipulation ${
-              sortBy === "name"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            이름
-          </button>
-          <button
-            type="button"
-            onClick={() => setSortBy("country")}
-            className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors touch-manipulation ${
-              sortBy === "country"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            나라
-          </button>
-          <button
-            type="button"
-            onClick={() => setSortBy("updated")}
-            className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors touch-manipulation ${
-              sortBy === "updated"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-            }`}
-          >
-            업데이트
-          </button>
+          {(["name", "country", "updated"] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setSortBy(value)}
+              className={`px-3 py-1.5 rounded-lg text-xs md:text-sm font-medium transition-colors touch-manipulation ${
+                sortBy === value
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+              }`}
+            >
+              {value === "name" ? "이름" : value === "country" ? "국가" : "업데이트"}
+            </button>
+          ))}
         </div>
       </div>
 
-      {/* 선교사 목록 */}
       <div className="mb-4">
-        {filteredWithFavoritesFirst.some((m) => favoriteIds.has(m.folderId)) && (
-          <h3 className="text-xs md:text-sm font-semibold text-amber-600 mb-1.5">⭐ 즐겨찾기</h3>
+        {filteredWithFavoritesFirst.some((item) => favoriteIds.has(item.folderId)) && (
+          <h3 className="text-xs md:text-sm font-semibold text-amber-600 mb-1.5">즐겨찾기</h3>
         )}
         <h3 className="text-xs md:text-sm font-semibold text-gray-700 mb-2">선교사 목록</h3>
         <div className="space-y-1.5 md:space-y-2">
           {filtered.length === 0 ? (
             <div className="text-center py-6 text-gray-500">
-              <p className="text-sm">검색 결과가 없습니다</p>
+              <p className="text-sm">검색 결과가 없습니다.</p>
             </div>
           ) : (
-            filteredWithFavoritesFirst.slice(0, 50).map((m) => {
-              const isFav = favoriteIds.has(m.folderId);
+            filteredWithFavoritesFirst.slice(0, 50).map((missionary) => {
+              const isFavorite = favoriteIds.has(missionary.folderId);
+              const countryKey = resolveCountryKey(missionary.country, countryCenters);
+              const iso2 = getCountryIso2(countryKey);
+              const isCCountry = missionary.country?.trim() === "C국";
+
               return (
                 <div
-                  key={m.folderId}
+                  key={missionary.folderId}
                   role="button"
                   tabIndex={0}
-                  onClick={() => router.push(`/viewer/${m.folderId}`)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      router.push(`/viewer/${m.folderId}`);
+                  onClick={() => router.push(`/viewer/${missionary.folderId}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      router.push(`/viewer/${missionary.folderId}`);
                     }
                   }}
-                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition-[background-color,border-color,transform,box-shadow] duration-150 touch-manipulation cursor-pointer flex items-center gap-2
-                    ${selected?.folderId === m.folderId
+                  className={`w-full text-left rounded-lg px-3 py-2.5 border transition-[background-color,border-color,transform,box-shadow] duration-150 touch-manipulation cursor-pointer flex items-center gap-2 ${
+                    selected?.folderId === missionary.folderId
                       ? "bg-blue-50 border-blue-300 shadow-sm hover:bg-blue-100 hover:border-blue-400 active:scale-[0.98] active:bg-blue-200/90 active:shadow-inner"
                       : "bg-white border-gray-200 hover:bg-blue-50 hover:border-blue-200 active:scale-[0.98] active:bg-blue-100 active:border-blue-300 active:shadow-inner"
-                    }`}
+                  }`}
                 >
                   <button
                     type="button"
-                    onClick={(e) => toggleFavorite(m.folderId, e)}
+                    onClick={(event) => toggleFavorite(missionary.folderId, event)}
                     className="flex-shrink-0 w-7 h-7 rounded flex items-center justify-center text-gray-400 hover:text-amber-500 hover:bg-amber-50 transition-colors touch-manipulation"
-                    aria-label={isFav ? "즐겨찾기 해제" : "즐겨찾기"}
-                    title={isFav ? "즐겨찾기 해제" : "즐겨찾기"}
+                    aria-label={isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}
+                    title={isFavorite ? "즐겨찾기 해제" : "즐겨찾기"}
                   >
-                    {isFav ? (
-                      <svg className="w-5 h-5 text-amber-500" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
-                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                      </svg>
-                    ) : (
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" />
-                      </svg>
-                    )}
+                    {isFavorite ? "★" : "☆"}
                   </button>
+
                   <div className="min-w-0 flex-1">
                     <div className="font-semibold text-gray-900 text-sm md:text-base flex items-center gap-2 min-w-0">
-                      {(() => {
-                        const rawCountry = m.country?.trim();
-                        if (rawCountry === "C국") {
-                          return (
-                            <span
-                              style={{ display: "inline-block", width: 20, height: 15, flexShrink: 0, backgroundColor: "#dc2626", borderRadius: 2 }}
-                              title={m.country || undefined}
-                              aria-hidden
-                            />
-                          );
-                        }
-                        const countryKey = resolveCountryKey(m.country, countryCenters);
-                        const iso2 = getCountryIso2(countryKey);
-                        return iso2 ? (
-                          <span
-                            className={`fi fi-${iso2}`}
-                            style={{ display: "inline-block", width: 20, height: 15, flexShrink: 0 }}
-                            title={m.country || undefined}
-                            aria-hidden
-                          />
-                        ) : null;
-                      })()}
-                      <span className="truncate">{m.name} 선교사</span>
+                      {isCCountry ? (
+                        <span
+                          style={{
+                            display: "inline-block",
+                            width: 20,
+                            height: 15,
+                            flexShrink: 0,
+                            backgroundColor: "#dc2626",
+                            borderRadius: 2,
+                          }}
+                          title={missionary.country || undefined}
+                          aria-hidden
+                        />
+                      ) : iso2 ? (
+                        <span
+                          className={`fi fi-${iso2}`}
+                          style={{ display: "inline-block", width: 20, height: 15, flexShrink: 0 }}
+                          title={missionary.country || undefined}
+                          aria-hidden
+                        />
+                      ) : null}
+                      <span className="truncate">{missionary.name} 선교사</span>
                     </div>
-                    <div className="text-xs text-gray-600 mt-0.5">{m.country || "국가 미지정"}</div>
+                    <div className="text-xs text-gray-600 mt-0.5">{missionary.country || "국가 미지정"}</div>
                   </div>
-                  {m.updatedAtMs != null ? (
-                    <span className="flex-shrink-0 text-[10px] md:text-xs text-gray-500" title={(() => {
-                      const d = new Date(m.updatedAtMs);
-                      return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
-                    })()}>
-                      {(() => {
-                        const d = new Date(m.updatedAtMs!);
-                        return `${d.getMonth() + 1}.${String(d.getDate()).padStart(2, "0")}`;
-                      })()}
+
+                  {missionary.updatedAtMs != null ? (
+                    <span className="flex-shrink-0 text-[10px] md:text-xs text-gray-500">
+                      {formatShortDate(missionary.updatedAtMs)}
                     </span>
                   ) : (
                     <span className="flex-shrink-0 text-[10px] md:text-xs text-gray-400">-</span>
@@ -511,32 +499,41 @@ export default function Home() {
               );
             })
           )}
+
           {filtered.length > 50 && (
             <div className="text-[10px] md:text-xs text-gray-500 text-center py-2">
-              상위 50개만 표시 중 (검색으로 좁혀주세요)
+              상위 50명만 표시 중입니다. 검색어로 더 좁혀보세요.
             </div>
           )}
         </div>
       </div>
 
-      {/* 선택된 선교사 정보 */}
       {selected && (
         <div className="space-y-3 md:space-y-4 border-t pt-3 md:pt-4">
           <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg p-3 md:p-4 border border-blue-100">
             <div className="text-lg md:text-xl font-bold text-gray-900 mb-1 flex items-center gap-2">
               {(() => {
-                const rawCountry = selected.country?.trim();
-                if (rawCountry === "C국") {
+                const countryKey = resolveCountryKey(selected.country, countryCenters);
+                const iso2 = getCountryIso2(countryKey);
+                const isCCountry = selected.country?.trim() === "C국";
+
+                if (isCCountry) {
                   return (
                     <span
-                      style={{ display: "inline-block", width: 28, height: 21, flexShrink: 0, backgroundColor: "#dc2626", borderRadius: 2 }}
+                      style={{
+                        display: "inline-block",
+                        width: 28,
+                        height: 21,
+                        flexShrink: 0,
+                        backgroundColor: "#dc2626",
+                        borderRadius: 2,
+                      }}
                       title={selected.country || undefined}
                       aria-hidden
                     />
                   );
                 }
-                const countryKey = resolveCountryKey(selected.country, countryCenters);
-                const iso2 = getCountryIso2(countryKey);
+
                 return iso2 ? (
                   <span
                     className={`fi fi-${iso2}`}
@@ -548,7 +545,7 @@ export default function Home() {
               })()}
               <span>{selected.name}</span>
             </div>
-            <div className="text-xs md:text-sm text-gray-600 mb-1">📍 {selected.country || "국가 미지정"}</div>
+            <div className="text-xs md:text-sm text-gray-600 mb-1">국가: {selected.country || "국가 미지정"}</div>
             {selected.ministry && (
               <div className="text-xs md:text-sm text-gray-700 mt-2">{selected.ministry}</div>
             )}
@@ -557,27 +554,31 @@ export default function Home() {
               onClick={() => router.push(`/viewer/${selected.folderId}`)}
               className="mt-3 md:mt-4 w-full rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 px-4 py-3 text-white text-sm md:text-base font-medium active:from-blue-700 active:to-purple-700 transition-all shadow-md touch-manipulation"
             >
-              📖 기도편지 보기
+              기도편지 보기
             </button>
           </div>
 
           {loadingImages && (
             <div className="text-center py-3">
-              <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mb-2"></div>
-              <p className="text-xs text-gray-600">이미지 확인 중...</p>
+              <div className="inline-block animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mb-2" />
+              <p className="text-xs text-gray-600">이미지를 확인하는 중...</p>
             </div>
           )}
+
           {!loadingImages && images.length > 0 && (
             <div className="text-center py-3 bg-green-50 rounded-lg border border-green-200">
-              <p className="text-xs md:text-sm text-green-700 font-medium">📸 {images.length}개의 기도편지가 있습니다</p>
-              <p className="text-[10px] md:text-xs text-green-600 mt-1">위 버튼을 클릭하여 확인하세요</p>
+              <p className="text-xs md:text-sm text-green-700 font-medium">
+                현재 {images.length}개의 기도편지가 있습니다.
+              </p>
+              <p className="text-[10px] md:text-xs text-green-600 mt-1">버튼을 눌러 전체 이미지를 확인해 보세요.</p>
             </div>
           )}
+
           {!loadingImages && images.length === 0 && (
             <div className="text-center py-3 bg-gray-50 rounded-lg border border-gray-200">
               <div className="text-xl mb-2">📭</div>
-              <p className="text-xs text-gray-600">아직 선교지에서 기도편지가 도착하지 않았습니다🙏</p>
-              <p className="text-[10px] text-gray-500 mt-1">해당 폴더에 JPG 파일을 추가해주세요</p>
+              <p className="text-xs text-gray-600">아직 등록된 기도편지가 없습니다.</p>
+              <p className="text-[10px] text-gray-500 mt-1">해당 폴더에 JPG 파일이 있는지 확인해 주세요.</p>
             </div>
           )}
         </div>
@@ -587,78 +588,53 @@ export default function Home() {
 
   return (
     <>
-      {/* ====== 모바일 레이아웃 ====== */}
       <div className="lg:hidden flex flex-col min-h-screen">
         <Header />
         <div className="flex-1 overflow-y-auto">
-          {/* 지도 - 고정 높이, 스크롤하면 위로 밀려남 */}
           <div className="h-[35vh] relative">
             {loadingItems ? (
               <div className="absolute inset-0 flex items-center justify-center bg-gray-50">
                 <div className="text-center">
-                  <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+                  <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4" />
                   <p className="text-gray-600">선교사 목록을 불러오는 중...</p>
                 </div>
               </div>
             ) : (
-              <WorldMap items={filtered} onSelect={setSelected} />
+              <WorldMap items={filtered} onSelect={handleSelectMissionary} />
             )}
           </div>
-          {/* 리스트 */}
-          <div className="min-h-screen bg-white border-t p-3">
-            {sidebarContent}
-          </div>
+          <div className="min-h-screen bg-white border-t p-3">{sidebarContent}</div>
         </div>
       </div>
 
-      {/* ====== 데스크톱 레이아웃 ====== */}
       <div className="hidden lg:flex lg:flex-col lg:h-screen">
         <Header />
         <div className="flex flex-1 overflow-hidden">
-          {/* 사이드바 - 왼쪽 (리사이즈 가능) */}
-          <aside
-            className="flex-shrink-0 bg-white overflow-y-auto p-4"
-            style={{ width: sidebarWidth }}
-          >
+          <aside className="flex-shrink-0 bg-white overflow-y-auto p-4" style={{ width: sidebarWidth }}>
             {sidebarContent}
           </aside>
 
-          {/* 리사이저 바 */}
           <div
             role="separator"
-            aria-label="리스트·지도 너비 조절"
+            aria-label="사이드바 너비 조절"
             onMouseDown={startResize}
             className="flex-shrink-0 w-2 cursor-col-resize bg-gray-200 hover:bg-blue-300 active:bg-blue-400 transition-colors"
           />
 
-          {/* 지도 - 오른쪽 (나머지 공간 전부) */}
           <div className="flex-1 relative min-w-0">
             {loadingItems ? (
               <div className="absolute inset-0 flex items-center justify-center bg-gray-50">
                 <div className="text-center">
-                  <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+                  <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4" />
                   <p className="text-gray-600">선교사 목록을 불러오는 중...</p>
                 </div>
               </div>
             ) : (
-              <WorldMap items={filtered} onSelect={setSelected} />
+              <WorldMap items={filtered} onSelect={handleSelectMissionary} />
             )}
           </div>
         </div>
       </div>
-
-      {/* 이미지 모달 */}
-      {modalImage && (
-        <ImageModal
-          image={modalImage}
-          images={images}
-          onClose={closeImageModal}
-          onNext={nextImage}
-          onPrev={prevImage}
-          hasNext={currentImageIndex < images.length - 1}
-          hasPrev={currentImageIndex > 0}
-        />
-      )}
     </>
   );
 }
