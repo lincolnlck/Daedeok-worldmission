@@ -139,7 +139,7 @@ function listMissionaryFolders_(sort) {
 
 function listImagesInFolder_(folderId) {
   const cache = CacheService.getScriptCache();
-  const cacheKey = "folder_images_v6_" + folderId;
+  const cacheKey = "folder_images_v7_" + folderId;
 
   const cached = cache.get(cacheKey);
   if (cached) return JSON.parse(cached);
@@ -153,6 +153,7 @@ function listImagesInFolder_(folderId) {
     const mt = file.getMimeType();
     if (mt && mt.indexOf("image/") === 0) {
       const id = file.getId();
+      const created = file.getDateCreated();
       const updated = file.getLastUpdated();
 
       images.push({
@@ -160,6 +161,8 @@ function listImagesInFolder_(folderId) {
         name: file.getName(),
         mimeType: mt,
         url: "https://drive.google.com/thumbnail?id=" + id + "&sz=w2000",
+        createdAtMs: created ? created.getTime() : 0,
+        createdAt: created ? Utilities.formatDate(created, "UTC", "yyyy-MM-dd'T'HH:mm:ss'Z'") : "",
         updatedAtMs: updated ? updated.getTime() : 0,
         updatedAt: updated ? Utilities.formatDate(updated, "UTC", "yyyy-MM-dd'T'HH:mm:ss'Z'") : ""
       });
@@ -168,7 +171,7 @@ function listImagesInFolder_(folderId) {
 
   // 최신순
   images.sort(function (a, b) {
-    return (b.updatedAtMs || 0) - (a.updatedAtMs || 0);
+    return (b.createdAtMs || 0) - (a.createdAtMs || 0);
   });
 
   const result = { folderId: folderId, images: images };

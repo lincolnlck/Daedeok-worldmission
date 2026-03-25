@@ -14,8 +14,10 @@ function extractTrailingNumber(name: string): number {
 
 function sortImages(images: ImageItem[]): ImageItem[] {
   return [...images].sort((a, b) => {
-    const dateA = a.updatedAtMs ? new Date(a.updatedAtMs) : null;
-    const dateB = b.updatedAtMs ? new Date(b.updatedAtMs) : null;
+    const primaryDateA = a.createdAtMs ?? a.updatedAtMs ?? 0;
+    const primaryDateB = b.createdAtMs ?? b.updatedAtMs ?? 0;
+    const dateA = primaryDateA ? new Date(primaryDateA) : null;
+    const dateB = primaryDateB ? new Date(primaryDateB) : null;
 
     if (dateA) dateA.setHours(0, 0, 0, 0);
     if (dateB) dateB.setHours(0, 0, 0, 0);
@@ -28,8 +30,8 @@ function sortImages(images: ImageItem[]): ImageItem[] {
     const numB = extractTrailingNumber(b.name);
     if (numA !== numB) return numA - numB;
 
-    const updatedAtDiff = (a.updatedAtMs ?? 0) - (b.updatedAtMs ?? 0);
-    if (updatedAtDiff !== 0) return updatedAtDiff;
+    const primaryDiff = primaryDateA - primaryDateB;
+    if (primaryDiff !== 0) return primaryDiff;
 
     return a.name.localeCompare(b.name, "ko");
   });

@@ -3,13 +3,15 @@
  * - 같은 폴더 재진입 시 API 생략으로 로딩 속도 개선
  */
 
-const CACHE_KEY_PREFIX = "mission-prayer-images-v2-";
+const CACHE_KEY_PREFIX = "mission-prayer-images-v3-";
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5분
 
 export type ImageItem = {
   fileId: string;
   name: string;
   url: string;
+  createdAtMs?: number;
+  createdAt?: string;
   updatedAtMs?: number;
   updatedAt?: string;
 };
@@ -31,7 +33,12 @@ export function getCachedImages(folderId: string): ImageItem[] | null {
     const images = entry.images ?? null;
     if (!images) return null;
 
-    if (images.some((image) => typeof image.updatedAtMs !== "number")) {
+    if (
+      images.some(
+        (image) =>
+          typeof image.createdAtMs !== "number" && typeof image.updatedAtMs !== "number"
+      )
+    ) {
       sessionStorage.removeItem(getCacheKey(folderId));
       return null;
     }
