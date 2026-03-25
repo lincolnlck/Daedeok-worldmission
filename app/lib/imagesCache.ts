@@ -22,6 +22,26 @@ function getCacheKey(folderId: string): string {
   return `${CACHE_KEY_PREFIX}${folderId}`;
 }
 
+export function clearAllCachedImages(): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < sessionStorage.length; i += 1) {
+      const key = sessionStorage.key(i);
+      if (key && key.startsWith(CACHE_KEY_PREFIX)) {
+        keysToRemove.push(key);
+      }
+    }
+
+    for (const key of keysToRemove) {
+      sessionStorage.removeItem(key);
+    }
+  } catch {
+    // ignore
+  }
+}
+
 export function getCachedImages(folderId: string): ImageItem[] | null {
   if (typeof window === "undefined") return null;
   try {

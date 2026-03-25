@@ -8,7 +8,7 @@ import { resolveCountryKey, customRegionCenters } from "./data/countryAliases";
 import { getCountryIso2 } from "./data/countryIso2";
 import Header from "./components/Header";
 import StatsDashboard from "./components/StatsDashboard";
-import { fetchImages, type ImageItem } from "./lib/imagesCache";
+import { clearAllCachedImages, fetchImages, type ImageItem } from "./lib/imagesCache";
 
 type ApiItem = {
   folderId: string;
@@ -112,6 +112,7 @@ export default function Home() {
   const refreshMissionaries = useCallback((skipCache = false) => {
     try {
       sessionStorage.removeItem(CACHE_KEY);
+      clearAllCachedImages();
     } catch {
       // ignore
     }
